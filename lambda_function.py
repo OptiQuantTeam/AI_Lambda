@@ -15,29 +15,34 @@ def load_file(directory):
 
 def lambda_handler(event, context):
     
-       
-    file_path = load_file('AWS_Lambda')
+    try:
+        file_path = load_file('./')
+        
+        if file_path is None:
+            return {
+                "statusCode":400,
+                "message":"파일을 찾을 수 없습니다."
+            }
+        
+        
+        action = utils.test(file_path)
+        
+        if action > 0:
+            side = "BUY"
+        elif action < 0:
+            side = "SELL"
+        else:
+            side = "HOLD"
     
-    if file_path is None:
         return {
-            "statusCode":400,
-            "message":"파일을 찾을 수 없습니다."
+            "statusCode":200,
+            "side":side
         }
-    
-    
-    action = utils.test(file_path)
-    
-    if action > 0:
-        side = "BUY"
-    elif action < 0:
-        side = "SELL"
-    else:
-        side = "HOLD"
-    
-    return {
-        "statusCode":200,
-        "side":side
-    }
+    except Exception as e:
+        return {
+            "statusCode":500,
+            "message":str(e)
+        }
 
 
 if __name__ == '__main__':
