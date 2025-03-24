@@ -16,7 +16,7 @@ def load_file(directory):
 def lambda_handler(event, context):
     
        
-    file_path = load_file('AWS_Lambda')
+    file_path = load_file('./')
     
     if file_path is None:
         return {
