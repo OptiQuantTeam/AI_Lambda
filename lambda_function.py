@@ -16,7 +16,7 @@ def load_file(directory):
 def lambda_handler(event, context):
     
     try:
-        file_path = load_file('./')
+        file_path = load_file('./model')
         
         if file_path is None:
             return {
