@@ -42,7 +42,7 @@ jobs:
             echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_NAME }}" >> $GITHUB_ENV
           else
             echo "ECR_URI=${{ secrets.AWS_ECR_AI_DEV_URI }}" >> $GITHUB_ENV
-            echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_DEV_NAME }} >> $GITHUB_ENV"
+            echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_DEV_NAME }}" >> $GITHUB_ENV
           fi
           echo "VERSION=${{ needs.init-version.outputs.version }}" >> $GITHUB_ENV
           echo "ENV_TYPE=${{ needs.init-version.outputs.env_type }}" >> $GITHUB_ENV
