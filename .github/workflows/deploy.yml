@@ -12,7 +12,6 @@ jobs:
     outputs:
       version: ${{ steps.set-version.outputs.version }}
       env_type: ${{ steps.set-env.outputs.env_type }}
-      lambda_name: ${{ steps.set-env.outputs.lambda_name }}
     steps:
       - name: Set version
         id: set-version
@@ -25,10 +24,8 @@ jobs:
         run: |
           if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
             echo "env_type=prod" >> $GITHUB_OUTPUT
-            echo "lambda_name=ai-lambda" >> $GITHUB_OUTPUT
           else
             echo "env_type=dev" >> $GITHUB_OUTPUT
-            echo "lambda_name=ai-lambda-dev" >> $GITHUB_OUTPUT
           fi
 
   deploy:
@@ -42,12 +39,13 @@ jobs:
         run: |
           if [[ "${{ needs.init-version.outputs.env_type }}" == "prod" ]]; then
             echo "ECR_URI=${{ secrets.AWS_ECR_AI_URI }}" >> $GITHUB_ENV
+            echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_NAME }}" >> $GITHUB_ENV
           else
             echo "ECR_URI=${{ secrets.AWS_ECR_AI_DEV_URI }}" >> $GITHUB_ENV
+            echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_DEV_NAME }}"
           fi
           echo "VERSION=${{ needs.init-version.outputs.version }}" >> $GITHUB_ENV
           echo "ENV_TYPE=${{ needs.init-version.outputs.env_type }}" >> $GITHUB_ENV
-          echo "LAMBDA_NAME=${{ needs.init-version.outputs.lambda_name }}" >> $GITHUB_ENV
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
