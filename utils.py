@@ -1,12 +1,13 @@
 import requests
 from datetime import datetime
 import torch
+import numpy as np
 from ppo import PPO
 from indicator import RSI, EMA, CHG, StochasticRSI, MACD
 import pandas as pd
 
 # 1분, 5분, 30분, 1시간 등의 데이터(현재 데이터)를 거래소로부터 가져온다.
-def getCurrentData(symbol, interval='1m', limit=None):
+def getCurrentData(symbol, interval='5m', limit=None):
     url = "https://api.binance.com/api/v3/klines"
     columns = ['Open time', 'Open', 'High', 'Low', 'Close', 'Volume', 'Close time', 'Base asset volume', 'Number of trades',\
                 'Taker buy volume', 'Taker buy base asset volume', 'Ignore']
@@ -43,7 +44,7 @@ def getCurrentData(symbol, interval='1m', limit=None):
     df['MACD'] = MACD(df)
     df = df[['Open','Close','Volume','CHG','stocRSI','MACD']]
 
-    return df
+    return df, df['Close'].iloc[-1]
 
 
 
@@ -75,8 +76,23 @@ def preprocess_data(df):
     df['stocRSI'] = df['stocRSI'].clip(0, 100)
     df['MACD'] = df['MACD'].clip(-10, 10)  # 적절한 범위로 조정
     
-    return df.iloc[-1]
 
+    def get_composite_change_score(data):
+        short_term = np.mean(np.diff(data, n=1))
+
+        mid_term = np.mean(np.diff(data, n=5))
+
+        long_term = np.mean(np.diff(data, n=21))
+        
+        weights = [0.5, 0.3, 0.2]
+        conposite_score = np.average([short_term, mid_term, long_term], weights=weights)
+        return np.tanh(conposite_score)
+    
+
+    state = np.array([df.iloc[-1]['Close'], get_composite_change_score([df.iloc[-35:]['Volume']]),
+                        get_composite_change_score([df.iloc[-35:]['CHG']]), get_composite_change_score([df.iloc[-35:]['stocRSI']]), 
+                        get_composite_change_score([df.iloc[-35:]['MACD']])], dtype=np.float32)
+    return state
 
 
 def load_checkpoint(file_path):
@@ -85,9 +101,9 @@ def load_checkpoint(file_path):
     else:
         return torch.load(file_path, map_location=torch.device('cpu'))
 
-def test(file_path):
+def test(file_path, symbol):
     try:
-        state = getCurrentData("BTCUSDT", "1h", limit=12)
+        state, price = getCurrentData(symbol, "5m", limit=36)
         state = preprocess_data(state)  
 
         checkpoint = load_checkpoint(file_path)
@@ -128,7 +144,7 @@ def test(file_path):
         
         action, value, log_prob = ppo_agent.select_action(state)
 
-        return action
+        return action, price
 
     except Exception as e:
         print(f"\n에러 발생: {str(e)}")

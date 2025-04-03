@@ -155,11 +155,11 @@ jobs:
             \"attachments\": [
               {
                 \"color\": \"$COLOR\",
-                \"title\": \"$ENV_TEXT 환경 배포 $STATUS\",
+                \"title\": \"AI LAMBDA $ENV_TEXT 환경 배포 $STATUS\",
                 \"fields\": [
                   {
                     \"title\": \"브랜치\",
-                    \"value\": \"${{ github.ref }}\",
+                    \"value\": \"$(echo ${{ github.ref }} | cut -d'/' -f3)\",
                     \"short\": true
                   },
                   {
