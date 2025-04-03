@@ -5,50 +5,7 @@ from torch.distributions import Normal
 import numpy as np
 from collections import deque
 import datetime
-
-class ActorCritic(nn.Module):
-    def __init__(self, state_dim, action_dim):
-        super(ActorCritic, self).__init__()
-        
-        # 공통 특징 추출 레이어
-        self.feature_extraction = nn.Sequential(
-            nn.Linear(state_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU()
-        )
-        
-        # 액터 네트워크 (정책) - 포지션 방향
-        self.actor_direction = nn.Sequential(
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1),
-            nn.Tanh()  # -1 ~ 1 범위로 제한
-        )
-        
-
-        
-        # 행동의 표준편차
-        self.actor_direction_std = nn.Parameter(torch.zeros(1))
-        
-        # 크리틱 네트워크 (가치 함수)
-        self.critic = nn.Sequential(
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1)
-        )
-        
-    def forward(self, state):
-        features = self.feature_extraction(state)
-        
-        # 액터: 행동 분포의 평균과 표준편차
-        direction_mean = self.actor_direction(features)
-        direction_std = torch.exp(self.actor_direction_std).expand_as(direction_mean)
-        
-        # 크리틱: 상태 가치
-        value = self.critic(features)
-        
-        return direction_mean, direction_std, value
+from ActorCritic import ActorCritic
 
 class PPO:
     def __init__(
@@ -63,7 +20,10 @@ class PPO:
         epochs=10,
         device="cuda" if torch.cuda.is_available() else "cpu"
     ):
+        self.state_dim = state_dim
+        self.action_dim = action_dim
         self.actor_critic = ActorCritic(state_dim, action_dim).to(device)
+        #self.actor_critic = ActorCriticLSTM(state_dim, action_dim, hidden_dim=128, lstm_layers=2).to(device)
         self.optimizer = optim.Adam([
             {'params': self.actor_critic.feature_extraction.parameters()},
             {'params': self.actor_critic.actor_direction.parameters()},
@@ -100,7 +60,7 @@ class PPO:
             value.cpu().numpy()[0],
             log_prob.cpu().numpy()[0]
         )
-    
+        
     def store_transition(self, transition):
         self.memory.append(transition)
     
@@ -183,29 +143,48 @@ class PPO:
                 
                 # 현재 정책의 행동 분포
                 direction_mean, direction_std, value = self.actor_critic(state)
-                
-                # 방향과 거래량에 대한 분포
                 direction_dist = Normal(direction_mean, direction_std)
-                
-                # 새로운 로그 확률 계산
                 new_log_prob = direction_dist.log_prob(action[:, 0:1])
                 
-                #print(f"new_log_prob: {new_log_prob}")
-                #print(f"old_log_prob: {old_log_prob}")
                 # PPO 비율 계산
                 ratio = torch.exp(new_log_prob - old_log_prob)
-                #print( f"ratio: {ratio}")
-                # 클리핑된 목적 함수
+                
+                # 수정된 손실 함수들
+                
+                # 1. Actor Loss - KL 페널티 추가
+                kl_div = 0.5 * ((new_log_prob - old_log_prob) ** 2).mean()
                 surr1 = ratio * advantage
                 surr2 = torch.clamp(ratio, 1-self.epsilon, 1+self.epsilon) * advantage
-                actor_loss = -torch.min(surr1, surr2).mean()
+                actor_loss = -torch.min(surr1, surr2).mean() + 0.01 * kl_div
                 
-                # 가치 함수 손실
-                value = value.squeeze()
-                critic_loss = nn.CrossEntropyLoss()(value, return_)
+                # 2. Critic Loss - Huber Loss 사용
+                value = value.squeeze(-1)   # 차원 축소 추가
+                critic_loss = nn.SmoothL1Loss()(value, return_)
                 
-                # 전체 손실
-                loss = actor_loss + 0.5 * critic_loss
+                # 3. 엔트로피와 정규화 손실
+                entropy_loss = -0.01 * direction_dist.entropy().mean()
+                std_loss = 0.01 * (direction_std ** 2).mean()  # 표준편차 페널티
+                
+                # 4. 거래 관련 페널티
+                trading_fee = 0.0003
+                fee_penalty = trading_fee * torch.abs(action).mean()
+                position_change_penalty = 0.005 * torch.abs(action[1:] - action[:-1]).mean()  # 급격한 포지션 변화 페널티
+                
+                # 5. 리스크 관리 손실
+                max_drawdown_penalty = 0.02 * torch.max(torch.cumsum(torch.min(action, torch.zeros_like(action)), dim=0))
+                volatility_penalty = 0.015 * torch.std(action)
+                
+                # 전체 손실 함수 조합
+                loss = (
+                    actor_loss +
+                    0.5 * critic_loss +
+                    entropy_loss +
+                    std_loss +
+                    fee_penalty +
+                    position_change_penalty +
+                    max_drawdown_penalty +
+                    volatility_penalty
+                )
                 
                 # 역전파 및 최적화
                 self.optimizer.zero_grad()

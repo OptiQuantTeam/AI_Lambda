@@ -1,0 +1,173 @@
+name: AWS Lambda Build
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+
+jobs:
+  init-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.set-version.outputs.version }}
+      env_type: ${{ steps.set-env.outputs.env_type }}
+    steps:
+      - name: Set version
+        id: set-version
+        run: |
+          version=$(TZ='Asia/Seoul' date +'%Y%m%d')
+          echo "version=${version}" >> $GITHUB_OUTPUT
+      
+      - name: Set environment variables
+        id: set-env
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
+            echo "env_type=prod" >> $GITHUB_OUTPUT
+          else
+            echo "env_type=dev" >> $GITHUB_OUTPUT
+          fi
+
+  deploy:
+    needs: init-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      # ECR URI를 조건문으로 직접 설정
+      - name: Set ECR URI
+        run: |
+          if [[ "${{ needs.init-version.outputs.env_type }}" == "prod" ]]; then
+            echo "ECR_URI=${{ secrets.AWS_ECR_AI_URI }}" >> $GITHUB_ENV
+            echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_NAME }}" >> $GITHUB_ENV
+          else
+            echo "ECR_URI=${{ secrets.AWS_ECR_AI_DEV_URI }}" >> $GITHUB_ENV
+            echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_DEV_NAME }}" >> $GITHUB_ENV
+          fi
+          echo "VERSION=${{ needs.init-version.outputs.version }}" >> $GITHUB_ENV
+          echo "ENV_TYPE=${{ needs.init-version.outputs.env_type }}" >> $GITHUB_ENV
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Delete all ECR images
+        run: |
+          REPO_NAME=$(echo $ECR_URI | cut -d'/' -f2-)
+          echo "리포지토리: $REPO_NAME"
+          
+          # 모든 이미지 다이제스트 가져오기
+          IMAGE_DIGESTS=$(aws ecr describe-images \
+            --repository-name $REPO_NAME \
+            --query 'imageDetails[*].[imageDigest]' \
+            --output text)
+          
+          if [ ! -z "$IMAGE_DIGESTS" ]; then
+            echo "모든 이미지 삭제 중..."
+            for digest in $IMAGE_DIGESTS; do
+              aws ecr batch-delete-image \
+                --repository-name $REPO_NAME \
+                --image-ids imageDigest=$digest
+              echo "이미지 삭제 완료: $digest"
+            done
+            echo "모든 이미지 삭제가 완료되었습니다."
+          else
+            echo "삭제할 이미지가 없습니다."
+          fi
+
+      - name: Build and Push Image
+        run: |
+          # 환경 변수 사용
+          echo "Building for $ENV_TYPE environment"
+          echo "Version: $VERSION"
+          
+          # Dockerfile 선택
+          DOCKERFILE=$([[ "$ENV_TYPE" == "prod" ]] && echo "Dockerfile" || echo "Dockerfile.dev")
+          
+          # 이미지 빌드 및 푸시
+          docker build -t ${LAMBDA_NAME}:${VERSION} -f ${DOCKERFILE} --no-cache .
+          echo "build success"
+          echo "${LAMBDA_NAME}:${VERSION}" 
+          echo "${ECR_URI}:${VERSION}"
+          docker tag ${LAMBDA_NAME}:${VERSION} ${ECR_URI}:${VERSION}
+          echo "tag success"
+          docker push ${ECR_URI}:${VERSION}
+          echo "push success"
+
+      - name: Update Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name $LAMBDA_NAME \
+            --image-uri $ECR_URI:$VERSION
+
+      - name: Wait for Lambda Update
+        run: |
+          echo "Lambda 업데이트 후 30초 대기..."
+          sleep 30
+
+      - name: Test Lambda
+        run: |
+          RESPONSE=$(aws lambda invoke \
+            --function-name $LAMBDA_NAME \
+            --payload '{"mode": "test"}' \
+            --cli-binary-format raw-in-base64-out \
+            output.json)
+          
+          STATUS_CODE=$(echo $RESPONSE | jq -r '.StatusCode')
+          FUNCTION_ERROR=$(echo $RESPONSE | jq -r '.FunctionError // empty')
+          
+          if [ "$STATUS_CODE" != "200" ] || [ ! -z "$FUNCTION_ERROR" ]; then
+            echo "::error::Lambda 테스트 실패 ($ENV_TYPE)"
+            echo $RESPONSE
+            exit 1
+          fi
+
+  notify:
+    needs: [init-version, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Slack 알림 전송
+        env:
+          VERSION: ${{ needs.init-version.outputs.version }}
+          ENV_TYPE: ${{ needs.init-version.outputs.env_type }}
+        run: |
+          # 환경 표시 텍스트
+          ENV_TEXT=$([[ "$ENV_TYPE" == "prod" ]] && echo "프로덕션" || echo "개발")
+          
+          # 결과 상태
+          if [ "${{ needs.deploy.result }}" = "success" ]; then
+            COLOR="good"
+            STATUS="성공"
+          else
+            COLOR="danger"
+            STATUS="실패"
+          fi
+
+          curl -X POST -H 'Content-type: application/json' \
+          --data "{
+            \"attachments\": [
+              {
+                \"color\": \"$COLOR\",
+                \"title\": \"AI LAMBDA $ENV_TEXT 환경 배포 $STATUS\",
+                \"fields\": [
+                  {
+                    \"title\": \"브랜치\",
+                    \"value\": \"$(echo ${{ github.ref }} | cut -d'/' -f3)\",
+                    \"short\": true
+                  },
+                  {
+                    \"title\": \"버전\",
+                    \"value\": \"$VERSION\",
+                    \"short\": true
+                  }
+                ]
+              }
+            ]
+          }" ${{ secrets.SLACK_WEBHOOK_URL }}

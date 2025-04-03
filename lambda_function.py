@@ -16,16 +16,19 @@ def load_file(directory):
 def lambda_handler(event, context):
     
     try:
+        symbol = 'BTCUSDT'
+        trade = "futures"
+
         file_path = load_file('./model')
         
         if file_path is None:
             return {
                 "statusCode":400,
-                "message":"파일을 찾을 수 없습니다."
+                "info":"파일을 찾을 수 없습니다."
             }
         
         
-        action = utils.test(file_path)
+        action, price = utils.test(file_path, symbol)
         
         if action > 0:
             side = "BUY"
@@ -36,12 +39,18 @@ def lambda_handler(event, context):
     
         return {
             "statusCode":200,
-            "side":side
+            "info":{
+                "price":price,
+                "symbol":symbol,
+                "side":side,
+                "positionSide":"BOTH",
+                "trade":trade
+            }
         }
     except Exception as e:
         return {
             "statusCode":500,
-            "message":str(e)
+            "info":str(e)
         }
 
 
