@@ -60,9 +60,6 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v1
-
       - name: Delete ECR images
         run: |
           REPO_NAME=$(echo $ECR_URI | cut -d'/' -f2-)
@@ -126,8 +123,8 @@ jobs:
       - name: Set Environment Variables
         id: set-var
         run: |
-          echo "ECR_URI=${{ needs.build.outputs.tag }}" >> $GITHUB_ENV
-          echo "LAMBDA_NAME=${{ needs.build.outputs.tag }}" >> $GITHUB_ENV
+          echo "ECR_URI=${{ secrets.AWS_ECR_AI_URI }}" >> $GITHUB_ENV
+          echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_NAME }}" >> $GITHUB_ENV
           echo "TAG=${{ needs.build.outputs.tag }}" >> $GITHUB_ENV
           
       - name: Update Lambda
