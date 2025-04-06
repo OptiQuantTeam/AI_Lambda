@@ -61,6 +61,10 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v1
 
+      - name: Docker Login
+        run: |
+          echo "${{ secrets.AWS_ECR_TOKEN }}" | docker login -u AWS --password-stdin ${{ secrets.AWS_ECR_REGISTRY }}
+
       - name: Delete ECR images
         run: |
           REPO_NAME=$(echo $ECR_URI | cut -d'/' -f2-)
