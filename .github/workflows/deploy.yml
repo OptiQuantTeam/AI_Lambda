@@ -28,24 +28,27 @@ jobs:
             echo "env_type=dev" >> $GITHUB_OUTPUT
           fi
 
-  deploy:
+  build:
     needs: init-version
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.set-var.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       
-      # ECR URI를 조건문으로 직접 설정
-      - name: Set ECR URI
+      - name: Set Environment Variables
+        id: set-var
         run: |
+          echo "ECR_URI=${{ secrets.AWS_ECR_AI_URI }}" >> $GITHUB_ENV
           if [[ "${{ needs.init-version.outputs.env_type }}" == "prod" ]]; then
-            echo "ECR_URI=${{ secrets.AWS_ECR_AI_URI }}" >> $GITHUB_ENV
             echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_NAME }}" >> $GITHUB_ENV
+            echo "TAG=${{ needs.init-version.outputs.version }}" >> $GITHUB_ENV
+            echo "tag=${{ needs.init-version.outputs.version }}" >> $GITHUB_OUTPUT
           else
-            echo "ECR_URI=${{ secrets.AWS_ECR_AI_DEV_URI }}" >> $GITHUB_ENV
             echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_DEV_NAME }}" >> $GITHUB_ENV
+            echo "TAG=${{ needs.init-version.outputs.env_type }}" >> $GITHUB_ENV
+            echo "tag=${{ needs.init-version.outputs.env_type }}" >> $GITHUB_OUTPUT
           fi
-          echo "VERSION=${{ needs.init-version.outputs.version }}" >> $GITHUB_ENV
-          echo "ENV_TYPE=${{ needs.init-version.outputs.env_type }}" >> $GITHUB_ENV
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -57,26 +60,35 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Delete all ECR images
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Delete ECR images
         run: |
           REPO_NAME=$(echo $ECR_URI | cut -d'/' -f2-)
           echo "리포지토리: $REPO_NAME"
           
-          # 모든 이미지 다이제스트 가져오기
-          IMAGE_DIGESTS=$(aws ecr describe-images \
-            --repository-name $REPO_NAME \
-            --query 'imageDetails[*].[imageDigest]' \
-            --output text)
+          if [[ "$ENV_TYPE" == "prod" ]]; then
+            IMAGES=$(aws ecr describe-images --repository-name $REPO_NAME --output json)
+            IMAGE_DIGESTS=$(echo $IMAGES | jq -r '.imageDetails[] | 
+              select(.imageTags != null and (.imageTags[] | test("^[0-9]{8}$"))) | 
+              .imageDigest')
+          else
+            IMAGE_DIGESTS=$(aws ecr describe-images \
+              --repository-name $REPO_NAME \
+              --query 'imageDetails[?imageTags[0]==`dev`].[imageDigest]' \
+              --output text)
+          fi
           
           if [ ! -z "$IMAGE_DIGESTS" ]; then
-            echo "모든 이미지 삭제 중..."
+            echo "이미지 삭제 중..."
             for digest in $IMAGE_DIGESTS; do
               aws ecr batch-delete-image \
                 --repository-name $REPO_NAME \
                 --image-ids imageDigest=$digest
               echo "이미지 삭제 완료: $digest"
             done
-            echo "모든 이미지 삭제가 완료되었습니다."
+            echo "선택된 이미지 삭제가 완료되었습니다."
           else
             echo "삭제할 이미지가 없습니다."
           fi
@@ -91,20 +103,42 @@ jobs:
           DOCKERFILE=$([[ "$ENV_TYPE" == "prod" ]] && echo "Dockerfile" || echo "Dockerfile.dev")
           
           # 이미지 빌드 및 푸시
-          docker build -t ${LAMBDA_NAME}:${VERSION} -f ${DOCKERFILE} --no-cache .
+          docker build -t ${LAMBDA_NAME}:${TAG} -f ${DOCKERFILE} --no-cache .
           echo "build success"
-          echo "${LAMBDA_NAME}:${VERSION}" 
-          echo "${ECR_URI}:${VERSION}"
-          docker tag ${LAMBDA_NAME}:${VERSION} ${ECR_URI}:${VERSION}
+          echo "${LAMBDA_NAME}:${TAG}" 
+          echo "${ECR_URI}:${TAG}"
+          docker tag ${LAMBDA_NAME}:${TAG} ${ECR_URI}:${TAG}
           echo "tag success"
-          docker push ${ECR_URI}:${VERSION}
+          docker push ${ECR_URI}:${TAG}
           echo "push success"
+  
+  deploy:
+    needs: [init-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Set Environment Variables
+        id: set-var
+        run: |
+          echo "ECR_URI=${{ needs.build.outputs.tag }}" >> $GITHUB_ENV
+          echo "LAMBDA_NAME=${{ needs.build.outputs.tag }}" >> $GITHUB_ENV
+          echo "TAG=${{ needs.build.outputs.tag }}" >> $GITHUB_ENV
+          
       - name: Update Lambda
         run: |
+          echo "Updating Lambda function: $LAMBDA_NAME"
+          echo "TAG: $TAG"
+          echo "Using image: $ECR_URI:$TAG"
+          
           aws lambda update-function-code \
             --function-name $LAMBDA_NAME \
-            --image-uri $ECR_URI:$VERSION
+            --image-uri $ECR_URI:$TAG
 
       - name: Wait for Lambda Update
         run: |
