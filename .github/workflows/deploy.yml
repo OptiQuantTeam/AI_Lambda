@@ -40,12 +40,13 @@ jobs:
         id: set-var
         run: |
           echo "ECR_URI=${{ secrets.AWS_ECR_AI_URI }}" >> $GITHUB_ENV
+          echo "IMAGE_NAME=${{ secrets.IMAGE_NAME }}" >> $GITHUB_ENV
+          echo "VERSION=${{ needs.init-version.outputs.version }}" >> $GITHUB_ENV
+          echo "ENV_TYPE=${{ needs.init-version.outputs.env_type }}" >> $GITHUB_ENV
           if [[ "${{ needs.init-version.outputs.env_type }}" == "prod" ]]; then
-            echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_NAME }}" >> $GITHUB_ENV
             echo "TAG=${{ needs.init-version.outputs.version }}" >> $GITHUB_ENV
             echo "tag=${{ needs.init-version.outputs.version }}" >> $GITHUB_OUTPUT
           else
-            echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_DEV_NAME }}" >> $GITHUB_ENV
             echo "TAG=${{ needs.init-version.outputs.env_type }}" >> $GITHUB_ENV
             echo "tag=${{ needs.init-version.outputs.env_type }}" >> $GITHUB_OUTPUT
           fi
@@ -100,11 +101,11 @@ jobs:
           DOCKERFILE=$([[ "$ENV_TYPE" == "prod" ]] && echo "Dockerfile" || echo "Dockerfile.dev")
           
           # 이미지 빌드 및 푸시
-          docker build -t ${LAMBDA_NAME}:${TAG} -f ${DOCKERFILE} --no-cache .
+          docker build -t ${IMAGE_NAME}:${TAG} -f ${DOCKERFILE} --no-cache .
           echo "build success"
-          echo "${LAMBDA_NAME}:${TAG}" 
+          echo "${IMAGE_NAME}:${TAG}" 
           echo "${ECR_URI}:${TAG}"
-          docker tag ${LAMBDA_NAME}:${TAG} ${ECR_URI}:${TAG}
+          docker tag ${IMAGE_NAME}:${TAG} ${ECR_URI}:${TAG}
           echo "tag success"
           docker push ${ECR_URI}:${TAG}
           echo "push success"
@@ -124,7 +125,11 @@ jobs:
         id: set-var
         run: |
           echo "ECR_URI=${{ secrets.AWS_ECR_AI_URI }}" >> $GITHUB_ENV
-          echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_NAME }}" >> $GITHUB_ENV
+          if [[ "${{ needs.init-version.outputs.env_type }}" == "prod" ]]; then
+            echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_NAME }}" >> $GITHUB_ENV
+          else
+            echo "LAMBDA_NAME=${{ secrets.AWS_LAMBDA_AI_NAME }}-${{ needs.init-version.outputs.env_type }}" >> $GITHUB_ENV
+          fi
           echo "TAG=${{ needs.build.outputs.tag }}" >> $GITHUB_ENV
           
       - name: Update Lambda
