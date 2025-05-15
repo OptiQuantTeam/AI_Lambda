@@ -3,8 +3,8 @@ from datetime import datetime
 import torch
 import numpy as np
 from ppo import PPO
-from indicator import RSI, EMA, CHG, StochasticRSI, MACD
 import pandas as pd
+import os
 
 # 1분, 5분, 30분, 1시간 등의 데이터(현재 데이터)를 거래소로부터 가져온다.
 def getCurrentData(symbol, interval='5m', limit=None):
@@ -12,7 +12,6 @@ def getCurrentData(symbol, interval='5m', limit=None):
     columns = ['Open time', 'Open', 'High', 'Low', 'Close', 'Volume', 'Close time', 'Base asset volume', 'Number of trades',\
                 'Taker buy volume', 'Taker buy base asset volume', 'Ignore']
     
-
     params = {
         "symbol": symbol,
         "interval": interval,
@@ -20,6 +19,7 @@ def getCurrentData(symbol, interval='5m', limit=None):
         "endTime": None,
         "limit": limit
     }
+
     res = requests.get(url, params=params)
     value = res.json()
 
@@ -29,85 +29,125 @@ def getCurrentData(symbol, interval='5m', limit=None):
     df['High'] = df['High'].astype('float')
     df['Low'] = df['Low'].astype('float')
     df['Close'] = df['Close'].astype('float')
-    df['Volume'] = df['Volume'].astype('float')
-    df['RSI'] = RSI(df)
-    df['EMAF'] = EMA(df, window=10)
 
     df['Open time'] = df['Open time'].astype('int')
     df['Open time'] = df['Open time'].apply(lambda x : datetime.fromtimestamp(x/1000))
     df['Close time'] = df['Close time'].astype('int')
     df['Close time'] = df['Close time'].apply(lambda x : datetime.fromtimestamp(x/1000))
     df = df.set_index('Open time')
-    #print(df)
-    df['CHG'] = CHG(df)
-    df['stocRSI'] = StochasticRSI(df)
-    df['MACD'] = MACD(df)
-    df = df[['Open','Close','Volume','CHG','stocRSI','MACD']]
 
     return df, df['Close'].iloc[-1]
 
+def preprocess(ticker='BTCUSDT'):
+    data_6h, _ = getCurrentData(ticker, '6h', limit=210)
+    data_30m, price = getCurrentData(ticker, '30m', limit=40)
+    
+    data = pd.DataFrame()
+    data['Open'] = data_30m['Open']
+    data['Close'] = data_30m['Close']
+    data['High'] = data_30m['High']
+    data['Low'] = data_30m['Low']
+    data['Volume'] = data_30m['Volume']
+    """하이킨 아시 캔들 계산"""
+    # Heikin Ashi 캔들 계산
+    data['ha_close'] = (data_30m['Open'] + data_30m['High'] + data_30m['Low'] + data_30m['Close']) / 4
+    data['ha_open'] = (data_30m['Open'].shift(1) + data_30m['Close'].shift(1)) / 2
+    data['ha_high'] = data_30m[['High', 'Open', 'Close']].max(axis=1)
+    data['ha_low'] = data_30m[['Low', 'Open', 'Close']].min(axis=1)
+    
+    # 캔들 특성 계산
+    data['ha_body'] = abs(data['ha_close'] - data['ha_open'])
+    data['ha_lower_wick'] = np.minimum(data['ha_open'], data['ha_close']) - data['ha_low']
+    data['ha_upper_wick'] = data['ha_high'] - np.maximum(data['ha_open'], data['ha_close'])
+    
+    # 하이킨 아시 신호 생성 (1: 상승, 0: 중립, -1: 하락)
+    data['ha_signal'] = 0
+    data.loc[(data['ha_close'] > data['ha_open']) & 
+             (data['ha_lower_wick'] < 1e-6) & 
+             (data['ha_body'] > 0.5), 'ha_signal'] = 1
+    data.loc[(data['ha_close'] < data['ha_open']) & 
+             (data['ha_upper_wick'] < 1e-6) & 
+             (data['ha_body'] > 0.5), 'ha_signal'] = -1
+    
+    """6시간봉 200 EMA 및 신호 계산"""
+    # 가정:
+    # data_6h: 6시간봉 데이터가 포함된 Pandas DataFrame. DatetimeIndex를 가지며 'Close' 컬럼이 있어야 합니다.
+    # data: 최종 결과를 저장할 원본 Pandas DataFrame (예: 30분봉 데이터). DatetimeIndex를 가져야 합니다.
+    # pandas 라이브러리는 pd로 import 되어 있어야 합니다. (예: import pandas as pd)
 
+    # 1. 6시간봉 데이터 기준으로 200-period EMA 계산
+    #    adjust=False는 금융 데이터에서 EMA를 계산할 때 일반적인 설정입니다.
+    ema_200_on_6h = data_6h['Close'].ewm(span=200, adjust=False).mean()
 
-def preprocess_data(df):
-    """데이터 전처리: 결측치 처리 및 정규화"""
+    # 2. 6시간봉 데이터 기준으로 신호 생성
+    #    신호는 data_6h의 인덱스를 기준으로 계산됩니다.
+    #    초기값은 0 (중립)으로 설정합니다.
+    signal_on_6h = pd.Series(0, index=data_6h.index, dtype=int)
+    
+    # 'Close' 가격이 EMA 위에 있으면 신호는 1
+    signal_on_6h.loc[data_6h['Close'] > ema_200_on_6h] = 1
+    # 'Close' 가격이 EMA 아래에 있으면 신호는 -1
+    signal_on_6h.loc[data_6h['Close'] < ema_200_on_6h] = -1
+
+    # 3. 계산된 6시간봉 EMA 값과 신호를 원본 DataFrame('data')의 인덱스에 맞게 매핑합니다.
+    #    reindex와 ffill (forward-fill)을 사용하여, 6시간봉의 EMA 값과 신호가
+    #    다음 6시간봉 값이 나올 때까지 'data' DataFrame의 해당 기간 동안 유지되도록 합니다.
+    data['ema_200'] = ema_200_on_6h.reindex(data.index, method='ffill')
+    data['ema_200_signal'] = signal_on_6h.reindex(data.index, method='ffill')
+    
+    # 'data' DataFrame의 시작 부분에서 EMA/신호 계산에 필요한 6시간봉 데이터가 부족하여
+    # reindex 후에도 NaN 값이 남아있을 수 있습니다. 이 경우 신호를 0으로 채우고 정수형으로 변환합니다.
+    data['ema_200_signal'] = data['ema_200_signal'].fillna(0).astype(int)
+    
+    # print(data[['Close', 'ema_200', 'ema_200_signal']].tail()) # 디버깅 용도로 필요시 주석 해제하여 사용
+
+    """Stochastic RSI 계산"""
+    # RSI 계산
+    delta = data_30m['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    data['RSI'] = 100 - (100 / (1 + rs))
+
+    # Stochastic RSI 계산
+    data['stoch_rsi'] = (data['RSI'] - data['RSI'].rolling(14).min()) / \
+                        (data['RSI'].rolling(14).max() - data['RSI'].rolling(14).min())
+
+    # Stochastic RSI 신호 생성 (1: 과매수, 0: 중립, -1: 과매도)
+    data['stoch_signal'] = 0
+    data.loc[data['stoch_rsi'] < 0.2, 'stoch_signal'] = -1  # 과매도
+    data.loc[data['stoch_rsi'] > 0.8, 'stoch_signal'] = 1   # 과매수
+
+    """볼린저 밴드 계산"""
+    data['bb_middle'] = data_30m['Close'].rolling(window=20).mean()
+    data['bb_std'] = data_30m['Close'].rolling(window=20).std()
+    data['bb_upper'] = data['bb_middle'] + 2 * data['bb_std']
+    data['bb_lower'] = data['bb_middle'] - 2 * data['bb_std']
+    data['bb_width'] = (data['bb_upper'] - data['bb_lower']) / data['bb_middle']
+    data['bb_width_change'] = data['bb_width'].diff()
+
     # 필요한 컬럼만 선택
-    df = df[['Open', 'Close', 'Volume', 'CHG', 'stocRSI', 'MACD']]
+    data = data[['Open', 'Close', 'High', 'Low', 'Volume',
+                'ha_open', 'ha_close', 'ha_high', 'ha_low',
+                'ha_body', 'ha_lower_wick', 'ha_upper_wick',
+                'ha_signal', 'ema_200', 'ema_200_signal',
+                'stoch_rsi', 'stoch_signal',
+                'bb_middle', 'bb_std', 'bb_upper', 'bb_lower',
+                'bb_width', 'bb_width_change']]
     
-    # 결측치 처리
-    #df = df.fillna(method='ffill')  # 앞의 값으로 채우기
-    df = df.ffill()
-    df = df.bfill()
-    #df = df.fillna(method='bfill')  # 뒤의 값으로 채우기
+    # NaN 값 제거
 
-    # 이상치 제거 (극단값 제거)
-    for column in ['Open', 'Close', 'Volume', 'CHG']:
-        q1 = df[column].quantile(0.01)
-        q3 = df[column].quantile(0.99)
-        df[column] = df[column].clip(q1, q3)
-    
-    # 정규화
-    '''
-    for column in ['Open', 'Close', 'Volume', 'CHG']:
-        mean = df[column].mean()
-        std = df[column].std()
-        df[column] = (df[column] - mean) / (std + 1e-8)
-    '''
-    # stocRSI와 MACD는 이미 정규화된 형태이므로 극단값만 처리
-    df['stocRSI'] = df['stocRSI'].clip(0, 100)
-    df['MACD'] = df['MACD'].clip(-10, 10)  # 적절한 범위로 조정
-    
+    data = data.dropna()
+    data = data.iloc[-1]
+    state = np.array(data, dtype=np.float32)
+    return state, price
 
-    def get_composite_change_score(data):
-        short_term = np.mean(np.diff(data, n=1))
-
-        mid_term = np.mean(np.diff(data, n=5))
-
-        long_term = np.mean(np.diff(data, n=21))
-        
-        weights = [0.5, 0.3, 0.2]
-        conposite_score = np.average([short_term, mid_term, long_term], weights=weights)
-        return np.tanh(conposite_score)
-    
-
-    state = np.array([df.iloc[-1]['Close'], get_composite_change_score([df.iloc[-35:]['Volume']]),
-                        get_composite_change_score([df.iloc[-35:]['CHG']]), get_composite_change_score([df.iloc[-35:]['stocRSI']]), 
-                        get_composite_change_score([df.iloc[-35:]['MACD']])], dtype=np.float32)
-    return state
-
-
-def load_checkpoint(file_path):
-    if torch.cuda.is_available():
-        return torch.load(file_path, map_location=torch.device('cuda'))
-    else:
-        return torch.load(file_path, map_location=torch.device('cpu'))
-
-def test(file_path, symbol):
+def ai(ticker='BTCUSDT'):
     try:
-        state, price = getCurrentData(symbol, "5m", limit=36)
-        state = preprocess_data(state)  
+        state, price = preprocess(ticker=ticker)
 
+        file_path = load_file('./model')
         checkpoint = load_checkpoint(file_path)
-        
 
         
         # 이전 학습 상태 확인
@@ -149,3 +189,18 @@ def test(file_path, symbol):
     except Exception as e:
         print(f"\n에러 발생: {str(e)}")
         raise e
+
+def load_file(directory):
+    """현재 디렉터리에서 가장 먼저 발견된 .pth 파일 반환"""
+    for file in os.listdir(directory):
+        if file.endswith(".pth"):
+            file_path = os.path.join(directory, file)
+            return file_path
+            
+    return None  # 이 부분은 실행되지 않겠지만, 예외 처리를 위해 남김
+
+def load_checkpoint(file_path):
+    if torch.cuda.is_available():
+        return torch.load(file_path, map_location=torch.device('cuda'))
+    else:
+        return torch.load(file_path, map_location=torch.device('cpu'))
