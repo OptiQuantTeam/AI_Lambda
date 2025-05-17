@@ -1,7 +1,7 @@
 {
     "model_name": "PPO9",
-    "training_start_time": "2025-05-17_18-17-49",
-    "end_time": "20250517_18:17:54",
+    "training_start_time": "2025-05-17_18-42-56",
+    "end_time": "20250517_18:43:01",
     "learning_params": {
         "state_dim": 5,
         "action_dim": 3,
@@ -22,37 +22,37 @@
         "update_counts": 9
     },
     "training_results": {
-        "completed_episodes": 2168,
-        "win_rate": 21.475978207033183,
+        "completed_episodes": 2169,
+        "win_rate": 21.483755942947703,
         "episode_win_rate": [
-            0.5671641791044776
+            0.6271186440677966
         ],
-        "mean_episode_win_rate": 0.5671641791044776,
-        "max_episode_win_rate": 0.5671641791044776,
-        "min_episode_win_rate": 0.5671641791044776
+        "mean_episode_win_rate": 0.6271186440677966,
+        "max_episode_win_rate": 0.6271186440677966,
+        "min_episode_win_rate": 0.6271186440677966
     },
     "returns_stats": {
         "best_return": 1778687.141315344,
         "worst_return": 590547.5166496354,
-        "final_return": 993559.5070349984,
-        "mean_return": 979180.0518437193,
-        "return_std": 59838.31890484415,
-        "sharpe_ratio": 16.3637627153401
+        "final_return": 1018464.0193354262,
+        "mean_return": 979183.9428864584,
+        "return_std": 59836.632526298796,
+        "sharpe_ratio": 16.364288923780883
     },
     "profit_rate_stats": {
         "best_profit_rate": 77.8687141315344,
         "worst_profit_rate": -40.94524833503647,
-        "final_profit_rate": -0.6440492965001613,
-        "mean_profit_rate": -2.081994815628062,
-        "profit_rate_std": 5.9838318904844146,
-        "positive_rate": 0.28608221892025754
+        "final_profit_rate": 1.8464019335426158,
+        "mean_profit_rate": -2.0816057113541744,
+        "profit_rate_std": 5.98366325262988,
+        "positive_rate": 0.2861529318541997
     },
     "reward_stats": {
-        "total_reward": -161311.7863710541,
-        "mean_reward": -15.97937457860851,
+        "total_reward": -161319.7387515268,
+        "mean_reward": -15.978579511838907,
         "max_reward": 21.665402483724943,
         "min_reward": -176.04420676271133,
-        "reward_std": 15.385810520149496
+        "reward_std": 15.385255912817687
     },
     "environment_info": {
         "data_path": "/workspace/src/data/preprocess/BTCUSDT/BTCUSDT-30m-weekly.csv",
@@ -64,8 +64,8 @@
     },
     "session_info": {
         "session_type": "completed",
-        "session_time": "20250517_18:17:54",
-        "start_time": "2025-05-17_18-17-49",
+        "session_time": "20250517_18:43:01",
+        "start_time": "2025-05-17_18-42-56",
         "log_file": "logs/PPO9.log",
         "previous_episodes": 10082,
         "current_session_episodes": 1,
@@ -79,11 +79,11 @@
             "start_episode": 10082,
             "end_episode": 10083,
             "episodes_trained": 1,
-            "start_time": "2025-05-17_18-17-49",
-            "end_time": "20250517_18:17:54",
-            "win_rate": 21.475978207033183,
-            "mean_episode_win_rate": 0.5671641791044776,
-            "mean_profit_rate": -2.081994815628062
+            "start_time": "2025-05-17_18-42-56",
+            "end_time": "20250517_18:43:01",
+            "win_rate": 21.483755942947703,
+            "mean_episode_win_rate": 0.6271186440677966,
+            "mean_profit_rate": -2.0816057113541744
         }
     }
 }
