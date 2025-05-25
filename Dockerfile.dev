@@ -11,8 +11,8 @@ WORKDIR ${LAMBDA_TASK_ROOT}
 # Python 패키지 설치
 RUN git clone -b develop https://github.com/OptiQuantTeam/AI_Lambda.git .
 
+RUN pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu
 RUN pip install -r requirement.txt
-RUN pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
 
 
 CMD [ "lambda_function.lambda_handler" ]
