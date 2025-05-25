@@ -5,6 +5,7 @@ import numpy as np
 from ppo import PPO
 import pandas as pd
 import os
+import indicator
 
 # 1분, 5분, 30분, 1시간 등의 데이터(현재 데이터)를 거래소로부터 가져온다.
 def getCurrentData(symbol, interval='5m', limit=None):
@@ -48,12 +49,13 @@ def preprocess(ticker='BTCUSDT'):
     data['High'] = data_30m['High']
     data['Low'] = data_30m['Low']
     data['Volume'] = data_30m['Volume']
+
     """하이킨 아시 캔들 계산"""
     # Heikin Ashi 캔들 계산
-    data['ha_close'] = (data_30m['Open'] + data_30m['High'] + data_30m['Low'] + data_30m['Close']) / 4
-    data['ha_open'] = (data_30m['Open'].shift(1) + data_30m['Close'].shift(1)) / 2
-    data['ha_high'] = data_30m[['High', 'Open', 'Close']].max(axis=1)
-    data['ha_low'] = data_30m[['Low', 'Open', 'Close']].min(axis=1)
+    data['ha_close'] = (data['Open'] + data['High'] + data['Low'] + data['Close']) / 4
+    data['ha_open'] = (data['Open'].shift(1) + data['Close'].shift(1)) / 2
+    data['ha_high'] = data[['High', 'Open', 'Close']].max(axis=1)
+    data['ha_low'] = data[['Low', 'Open', 'Close']].min(axis=1)
     
     # 캔들 특성 계산
     data['ha_body'] = abs(data['ha_close'] - data['ha_open'])
@@ -68,6 +70,11 @@ def preprocess(ticker='BTCUSDT'):
     data.loc[(data['ha_close'] < data['ha_open']) & 
              (data['ha_upper_wick'] < 1e-6) & 
              (data['ha_body'] > 0.5), 'ha_signal'] = -1
+
+
+    data['ha_high_diff'] = data['ha_high'] - data['ha_high'].shift(1)
+    data['ha_low_diff'] = data['ha_low'] - data['ha_low'].shift(1)
+    data['ha_body_diff'] = data['ha_body'] - data['ha_body'].shift(1)
     
     """6시간봉 200 EMA 및 신호 계산"""
     # 가정:
@@ -103,40 +110,48 @@ def preprocess(ticker='BTCUSDT'):
 
     """Stochastic RSI 계산"""
     # RSI 계산
-    delta = data_30m['Close'].diff()
+    delta = data['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     data['RSI'] = 100 - (100 / (1 + rs))
-
+    
     # Stochastic RSI 계산
     data['stoch_rsi'] = (data['RSI'] - data['RSI'].rolling(14).min()) / \
                         (data['RSI'].rolling(14).max() - data['RSI'].rolling(14).min())
-
+    
     # Stochastic RSI 신호 생성 (1: 과매수, 0: 중립, -1: 과매도)
     data['stoch_signal'] = 0
     data.loc[data['stoch_rsi'] < 0.2, 'stoch_signal'] = -1  # 과매도
     data.loc[data['stoch_rsi'] > 0.8, 'stoch_signal'] = 1   # 과매수
 
     """볼린저 밴드 계산"""
-    data['bb_middle'] = data_30m['Close'].rolling(window=20).mean()
-    data['bb_std'] = data_30m['Close'].rolling(window=20).std()
-    data['bb_upper'] = data['bb_middle'] + 2 * data['bb_std']
-    data['bb_lower'] = data['bb_middle'] - 2 * data['bb_std']
-    data['bb_width'] = (data['bb_upper'] - data['bb_lower']) / data['bb_middle']
-    data['bb_width_change'] = data['bb_width'].diff()
+    bollinger_bands = indicator.Bollinger(data, window=20, num_std_dev=2)
+    data['bb_middle'] = bollinger_bands['bb_middle']
+    data['bb_upper'] = bollinger_bands['bb_upper']
+    data['bb_lower'] = bollinger_bands['bb_lower']
+    data['bb_width'] = bollinger_bands['bb_width']
+    data['bb_width_change'] = bollinger_bands['bb_width_change']
+
+    """MACD 계산"""
+    MACD = indicator.MACD(data, cross=False)
+    data['MACD'] = MACD['Histogram']
+    data['MACD_Signal'] = MACD['Signal Line']
+    data['Cross Signal'] = MACD['Cross Signal']
+    data['Divergence Signal'] = MACD['Divergence Signal']
+    data['Trade Signal'] = MACD['Trade Signal']
 
     # 필요한 컬럼만 선택
     data = data[['Open', 'Close', 'High', 'Low', 'Volume',
-                'ha_open', 'ha_close', 'ha_high', 'ha_low',
+                'ha_close', 'ha_open', 'ha_high', 'ha_low',
                 'ha_body', 'ha_lower_wick', 'ha_upper_wick',
-                'ha_signal', 'ema_200', 'ema_200_signal',
+                'ha_signal', 'ha_high_diff', 'ha_low_diff', 'ha_body_diff',
+                'ema_200', 'ema_200_signal',
                 'stoch_rsi', 'stoch_signal',
-                'bb_middle', 'bb_std', 'bb_upper', 'bb_lower',
-                'bb_width', 'bb_width_change']]
+                'bb_middle', 'bb_upper', 'bb_lower', 'bb_width', 'bb_width_change',
+                'MACD', 'MACD_Signal', 'Cross Signal', 'Divergence Signal', 'Trade Signal']]
     
     # NaN 값 제거
-
     data = data.dropna()
     data = data.iloc[-1]
     state = np.array(data, dtype=np.float32)
