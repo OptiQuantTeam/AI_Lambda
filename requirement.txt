@@ -22,9 +22,6 @@ pytz==2025.1
 requests==2.32.3
 six==1.17.0
 sympy==1.13.1
-torch==2.5.1+cpu
-torchaudio==2.5.1+cpu
-torchvision==0.20.1+cpu
 typing_extensions==4.12.2
 tzdata==2025.2
 urllib3==2.3.0
